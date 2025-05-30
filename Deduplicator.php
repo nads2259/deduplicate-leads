@@ -25,7 +25,7 @@
  *         php run.php --input=leads.json --output=output.json --log=changes.log
  *
  * @author   Nadeem Ahmad <naddy.ahmed@gmail.com>
- * @version  1.0.0
+ * @version  1.1.0
  * @see      https://github.com/highwaysniper001/deduplicate-leads
  * @since    2025-05-30
  * @category Migration
@@ -78,9 +78,8 @@ class Deduplicator
         $this->idMap = [];
         $this->emailMap = [];
         $this->logFile = $logFile;
-
-        // Clear log file
-        file_put_contents($this->logFile, "");
+        $this->ensureLogFileExists();
+        file_put_contents($this->logFile, ""); // clear log
     }
 
     /**
@@ -115,9 +114,26 @@ class Deduplicator
     public function deduplicate(): void
     {
         foreach ($this->records as $record) {
+            // Validate record
+            if (
+                empty($record['_id']) ||
+                empty($record['email']) ||
+                empty($record['entryDate'])
+            ) {
+                $this->logSkipped($record, 'Missing required fields (_id, email, or entryDate)');
+                continue;
+            }
+
             $recordId = $record['_id'];
             $email = $record['email'];
             $date = strtotime($record['entryDate']);
+            // CHeck strictly
+            //$date = DateTime::createFromFormat('Y-m-d H:i:s', $record['entryDate']);
+
+            if (!$date) {
+                $this->logSkipped($record, 'Invalid entryDate format');
+                continue;
+            }
 
             $existingById = $this->idMap[$recordId] ?? null;
             $existingByEmail = $this->emailMap[$email] ?? null;
@@ -134,10 +150,7 @@ class Deduplicator
                 $existingDate = strtotime($toCompare['entryDate']);
                 $replace = false;
 
-                if ($date > $existingDate) {
-                    $replace = true;
-                } elseif ($date === $existingDate) {
-                    // If dates are equal, take later record
+                if ($date > $existingDate || $date === $existingDate) {
                     $replace = true;
                 }
 
@@ -145,9 +158,9 @@ class Deduplicator
                     $changes = [];
 
                     foreach ($record as $key => $value) {
-                        if ($toCompare[$key] !== $value) {
+                        if (!array_key_exists($key, $toCompare) || $toCompare[$key] !== $value) {
                             $changes[$key] = [
-                                'from' => $toCompare[$key],
+                                'from' => $toCompare[$key] ?? 'N/A',
                                 'to'   => $value
                             ];
                         }
@@ -172,17 +185,37 @@ class Deduplicator
      * Loads records from file
      *
      * @param string $filePath File path.
-     * 
-     * @return array JSON decoded records.
+     *
+     * @throws RuntimeException If the file does not exist or contains invalid JSON.
+     *
+     * @return array JSON decoded records as array
      */
     private function loadJson(string $filePath): array
     {
-        $json = file_get_contents($filePath);
-        $data = json_decode($json, true);
-        if (isset($data['leads']) && is_array($data['leads'])) {
-            return $data['leads'];
+        if (!file_exists($filePath)) {
+            throw new RuntimeException(
+                "Input file '{$filePath}' not found."
+            );
         }
-        return $data;
+
+        $json = file_get_contents($filePath);
+        if (trim($json) === '') {
+            $data = [];
+        } else {
+            $data = json_decode($json, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new RuntimeException(
+                    "Invalid JSON format in '{$filePath}'. Error: " . json_last_error_msg()
+                );
+            }
+        }
+        if (isset($data['leads']) && is_array($data['leads'])) {
+            $result = $data['leads'];
+        } else {
+            $result = $data;
+        }
+        return $result;
     }
 
     /**
@@ -190,13 +223,24 @@ class Deduplicator
      *
      * @param array  $data     Array of records to save.
      * @param string $filePath File path.
-     * 
+     *
+     * @throws RuntimeException If unable to write to file
+     *
      * @return void
      */
     private function saveJson(array $data, string $filePath): void
     {
-        $json = json_encode(['leads' => array_values($data)], JSON_PRETTY_PRINT);
-        file_put_contents($filePath, $json);
+         $json = json_encode(
+            [
+                'leads' => array_values($data)
+            ],
+            JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
+        );
+        if (file_put_contents($filePath, $json) === false) {
+            throw new RuntimeException(
+                "Failed to write to output file '{$filePath}'. Check permissions."
+            );
+        }
     }
 
     /**
@@ -208,6 +252,42 @@ class Deduplicator
     public function saveOutput(string $outputFile): void
     {
         $this->saveJson($this->finalRecords, $outputFile);
+    }
+
+    /**
+     * Create if log file doesn't exist, 
+     * throw an exception if can't create
+     *
+     * @throws RuntimeException If the log file cannot be created.
+     *
+     * @return void
+     */
+    private function ensureLogFileExists(): void
+    {
+        if (empty($this->logFile)) {
+            throw new RuntimeException("Log file path is empty.");
+        }
+        if (!file_exists($this->logFile)) {
+            if (file_put_contents($this->logFile, "") === false) {
+                throw new RuntimeException("Failed to create log file at '{$this->logFile}'. Check permissions.");
+            }
+        }
+    }
+
+    /**
+     * Logs a skipped record with a specified reason.
+     *
+     * @param array  $record Skipped record
+     * @param string $reason Details why the record was skipped
+     *
+     * @return void
+     */
+    private function logSkipped(array $record, string $reason): void
+    {
+        $logEntry = "Skipped Record (Reason: $reason):" . PHP_EOL
+                . json_encode($record) . PHP_EOL
+                . str_repeat("-", 200) . PHP_EOL;
+        file_put_contents($this->logFile, $logEntry, FILE_APPEND);
     }
 }
 

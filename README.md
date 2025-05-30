@@ -20,11 +20,6 @@ If using the base file present in the directory
 php run.php --input=leads.json --output=output.json --log=changes.log
 ```
 
-If using the file present in the leads directory, format and add the same timestamps to your output and logs file to avoid confusion.
-```bash
-php run.php --input=leads/leads1748606969.json --output=output/output1748606969.json --log=logs/changes1748606969.log
-```
-
 Note: necessary file will be saved under relevant directory or path referenced in the script.
 
 ## CLI Sample Output
@@ -32,12 +27,6 @@ Note: necessary file will be saved under relevant directory or path referenced i
 Deduplication complete.
 Results saved to output.json.
 Log written to changes.log.
-```
-
-```bash
-Deduplication complete.
-Results saved to output/output1748606952.json.
-Log written to logs/changes1748606952.log.
 ```
 
 ### Logs format
